@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>DuckBot Android Core</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #050508;
+      color: #fff;
+      font-family: monospace;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      overflow: hidden;
+      padding: 1.5rem;
+    }
+
+    /* Face / Eyes Container */
+    #face-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      width: 100%;
+    }
+    .eye {
+      width: 75px;
+      height: 120px;
+      background: #00ffcc;
+      border-radius: 40px;
+      box-shadow: 0 0 25px #00ffcc, inset 0 0 15px #ffffff;
+      transition: all 0.15s ease-in-out;
+    }
+    .blink {
+      height: 4px !important;
+      margin-top: 58px;
+    }
+    .thinking {
+      background: #ffaa00 !important;
+      box-shadow: 0 0 25px #ffaa00 !important;
+      animation: pulse 0.8s infinite alternate;
+    }
+    .speaking {
+      background: #0088ff !important;
+      box-shadow: 0 0 25px #0088ff !important;
+    }
+    @keyframes pulse {
+      from { transform: scale(0.9); }
+      to { transform: scale(1.1); }
+    }
+
+    /* Controls & Debug Output */
+    #controls {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+    }
+    input, button {
+      padding: 10px;
+      background: #1a1a24;
+      border: 1px solid #33334d;
+      color: #00ffcc;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:active { background: #00ffcc; color: #000; }
+    #status-log {
+      font-size: 11px;
+      color: #8888aa;
+      height: 35px;
+      overflow-y: hidden;
+      white-space: pre-wrap;
+    }
+    video, canvas { display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="face-container">
+    <div class="eye" id="eye-left"></div>
+    <div class="eye" id="eye-right"></div>
+  </div>
+
+  <div id="controls">
+    <div id="status-log">Tap 'Start Sensors' to grant camera/mic permissions.</div>
+    <div class="row">
+      <input type="password" id="apiKey" placeholder="Google AI Studio API Key" style="flex: 2;">
+      <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
+    </div>
+    <div class="row">
+      <button onclick="connectBluetooth()" style="flex: 1;">Pair ESP32 (BLE)</button>
+      <button onclick="triggerVoiceInput()" style="flex: 1; background: #00ffcc; color: #000;">🎤 Speak</button>
+    </div>
+  </div>
+
+  <video id="webcam" playsinline autoplay muted></video>
+  <canvas id="snapshot-canvas" width="640" height="480"></canvas>
+
+  <script>
+    const eyeL = document.getElementById('eye-left');
+    const eyeR = document.getElementById('eye-right');
+    const statusLog = document.getElementById('status-log');
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('snapshot-canvas');
+    let bleCharacteristic = null;
+
+    // 1. Natural Blinking Loop
+    function blink() {
+      eyeL.classList.add('blink');
+      eyeR.classList.add('blink');
+      setTimeout(() => {
+        eyeL.classList.remove('blink');
+        eyeR.classList.remove('blink');
+      }, 180);
+      setTimeout(blink, Math.random() * 4000 + 2000);
+    }
+    blink();
+
+    function setMood(mood) {
+      eyeL.className = 'eye ' + mood;
+      eyeR.className = 'eye ' + mood;
+    }
+
+    // 2. Hardware / Sensor Activation
+    async function initSensors() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: 640, height: 480 },
+          audio: false
+        });
+        video.srcObject = stream;
+        statusLog.innerText = "Camera & Speech engine ready.";
+      } catch (err) {
+        statusLog.innerText = "Camera Error: " + err.message;
+      }
+    }
+
+    // 3. Web Bluetooth API for ESP32
+    async function connectBluetooth() {
+      try {
+        statusLog.innerText = "Searching for ESP32 BLE device...";
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'DuckBot' }],
+          optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+        bleCharacteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+        statusLog.innerText = "Connected to ESP32 over BLE!";
+      } catch (err) {
+        statusLog.innerText = "BLE Connect failed: " + err.message;
+      }
+    }
+
+    function sendMotorCommand(cmd) {
+      if (!bleCharacteristic) {
+        console.log("BLE not connected. Command would be:", cmd);
+        return;
+      }
+      const encoder = new TextEncoder();
+      bleCharacteristic.writeValue(encoder.encode(cmd));
+    }
+
+    // 4. Voice Capture via Web Speech API
+    function triggerVoiceInput() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Speech Recognition not supported in this browser. Use Chrome on Android.");
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setMood('');
+        statusLog.innerText = "Listening...";
+      };
+
+      recognition.onresult = (e) => {
+        const transcript = e.results[0][0].transcript;
+        statusLog.innerText = `Heard: "${transcript}"`;
+        processMultimodalQuery(transcript);
+      };
+
+      recognition.onerror = (e) => {
+        statusLog.innerText = "Mic Error: " + e.error;
+      };
+
+      recognition.start();
+    }
+
+    // 5. Vision Capture & Cloud LLM Query
+    async function processMultimodalQuery(userText) {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey) {
+        alert("Please enter your Google AI Studio API key.");
+        return;
+      }
+
+      setMood('thinking');
+      statusLog.innerText = "Capturing frame & thinking...";
+
+      // Grab still frame from selfie camera
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+
+      // System prompt with tool-calling schema
+      const systemInstruction = "You are DuckBot, a small intelligent mobile robot. You can see through your front camera. " +
+        "You speak concisely in a friendly tone. When instructed to move or search, reply with text AND invoke one of these action tags at the very end of your response: " +
+        "[CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP].";
+
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemInstruction }] },
+            contents: [{
+              parts: [
+                { text: userText },
+                { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+              ]
+            }]
+          })
+        });
+
+        const data = await response.json();
+        const replyText = data.candidates[0].content.parts[0].text;
+        handleRobotResponse(replyText);
+      } catch (err) {
+        setMood('');
+        statusLog.innerText = "API Error: " + err.message;
+      }
+    }
+
+    // 6. Speaking & Executing Action
+    function handleRobotResponse(rawReply) {
+      setMood('speaking');
+
+      // Extract command tag if present
+      const match = rawReply.match(/\[CMD:(FORWARD|BACKWARD|LEFT|RIGHT|STOP)\]/);
+      let cleanText = rawReply.replace(/\[CMD:\w+\]/g, '').trim();
+
+      if (match) {
+        const cmd = match[1];
+        statusLog.innerText = `Action: ${cmd} | Speech: ${cleanText}`;
+        sendMotorCommand(cmd.charAt(0)); // sends 'F', 'B', 'L', 'R', or 'S'
+      } else {
+        statusLog.innerText = cleanText;
+      }
+
+      // Android native Text-to-Speech
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.onend = () => setMood('');
+      window.speechSynthesis.speak(utterance);
+    }
+  </script>
+</body>
+</html>
