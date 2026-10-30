@@ -107,8 +107,8 @@
   <div id="controls">
     <div id="status-log">Tap 'Start Sensors' to activate camera & mic.</div>
     <div class="row">
-      <!-- HARDCODED AQ AUTH KEY -->
-      <input type="password" id="apiKey" value="AQ.Ab8RN6JF_A2Da8TnyBU1vLcxUSMCCUym6mQq11km4nC0ssr-1A" style="flex: 2;">
+      <!-- HARDCODED LATEST API KEY -->
+      <input type="password" id="apiKey" value="AQ.Ab8RN6LccBr62gtjbwxDtvfTipyLtkhLASzrKY1WXXfBfWhMMQ" style="flex: 2;">
       <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
     </div>
     <div class="row">
@@ -227,7 +227,7 @@
 
       const requestPayload = {
         system_instruction: {
-          parts: [{ text: "You are DuckBot, a small intelligent mobile robot. You can see through your front camera. Reply concisely in a friendly tone. When instructed to move, end your reply with one tag: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP]." }]
+          parts: [{ text: "You are DuckBot, a small intelligent mobile robot. You can see through your front camera. Reply concisely in one or two sentences in a friendly tone. When instructed to move, end your reply with one tag: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP]." }]
         },
         contents: [{
           parts: [
@@ -238,8 +238,7 @@
       };
 
       try {
-        // Uses gemini-2.0-flash with both header and query param authentication
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 
@@ -263,14 +262,17 @@
           return;
         }
 
-        const replyPart = data.candidates[0].content?.parts?.[0];
-        if (!replyPart || !replyPart.text) {
+        // Filter out internal thinking blocks to extract clean text
+        const parts = data.candidates[0].content?.parts || [];
+        const textPart = parts.find(p => p.text && !p.thought) || parts[parts.length - 1];
+
+        if (!textPart || !textPart.text) {
           setMood('');
           statusLog.innerText = "Error: Response content format unexpected.";
           return;
         }
 
-        handleRobotResponse(replyPart.text);
+        handleRobotResponse(textPart.text);
       } catch (err) {
         setMood('');
         statusLog.innerText = "Fetch Exception: " + err.message;
