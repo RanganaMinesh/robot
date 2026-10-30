@@ -107,8 +107,8 @@
   <div id="controls">
     <div id="status-log">Tap 'Start Sensors' to activate camera & mic.</div>
     <div class="row">
-      <!-- HARDCODED API KEY HERE -->
-      <input type="password" id="apiKey" value="AQ.Ab8RN6Lxj4yCIcZAnwa6ZeCZchAJ9GbRLXRHr_n3_ktgD5dpXg" style="flex: 2;">
+      <!-- HARDCODED AQ AUTH KEY -->
+      <input type="password" id="apiKey" value="AQ.Ab8RN6JF_A2Da8TnyBU1vLcxUSMCCUym6mQq11km4nC0ssr-1A" style="flex: 2;">
       <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
     </div>
     <div class="row">
@@ -211,7 +211,7 @@
     }
 
     async function processMultimodalQuery(userText) {
-      let apiKey = document.getElementById('apiKey').value.trim();
+      const apiKey = document.getElementById('apiKey').value.trim();
       if (!apiKey) {
         statusLog.innerText = "Error: API key is missing.";
         return;
@@ -238,11 +238,14 @@
       };
 
       try {
-        // UPDATED ENDPOINT: Uses gemini-1.5-flash-latest to resolve the 404 error
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+        // Uses gemini-2.0-flash with both header and query param authentication
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
         const response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
           body: JSON.stringify(requestPayload)
         });
 
