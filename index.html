@@ -30,7 +30,7 @@
       justify-content: center;
       gap: 40px;
       width: 100%;
-      min-height: 220px;
+      min-height: 200px;
     }
     
     .eye {
@@ -45,9 +45,14 @@
       height: 4px !important;
       margin-top: 58px;
     }
+    .attentive {
+      background: #ffff00 !important;
+      box-shadow: 0 0 30px #ffff00 !important;
+      transform: scale(1.05);
+    }
     .thinking {
-      background: #ffaa00 !important;
-      box-shadow: 0 0 25px #ffaa00 !important;
+      background: #ff8800 !important;
+      box-shadow: 0 0 25px #ff8800 !important;
       animation: pulse 0.8s infinite alternate;
     }
     .speaking {
@@ -63,22 +68,22 @@
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      padding-top: 15px;
+      gap: 10px;
+      padding-top: 10px;
     }
     .row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       width: 100%;
     }
     input, button {
-      padding: 14px;
+      padding: 12px;
       background: #1a1a24;
       border: 1px solid #33334d;
       color: #00ffcc;
       border-radius: 8px;
-      font-size: 14px;
-      min-height: 48px;
+      font-size: 13px;
+      min-height: 46px;
     }
     button {
       cursor: pointer;
@@ -89,7 +94,7 @@
     #status-log {
       font-size: 12px;
       color: #8888aa;
-      min-height: 40px;
+      min-height: 48px;
       overflow-y: auto;
       white-space: pre-wrap;
       text-align: center;
@@ -105,12 +110,13 @@
   </div>
 
   <div id="controls">
-    <div id="status-log">Tap 'Start Sensors' once to begin hands-free mode.</div>
+    <div id="status-log">Tap 'Start Hands-Free' to activate camera & mic.</div>
     <div class="row">
       <input type="password" id="apiKey" value="AQ.Ab8RN6LccBr62gtjbwxDtvfTipyLtkhLASzrKY1WXXfBfWhMMQ" style="flex: 2;">
-      <button onclick="initSensors()" id="startBtn" style="flex: 1; background: #00ffcc; color: #000;">Start Sensors</button>
+      <button onclick="initSensors()" id="startBtn" style="flex: 1; background: #00ffcc; color: #000;">Start Hands-Free</button>
     </div>
     <div class="row">
+      <button onclick="toggleCamera()" style="flex: 1;">📷 Flip Camera</button>
       <button onclick="connectBluetooth()" style="flex: 1;">Pair ESP32</button>
     </div>
   </div>
@@ -127,12 +133,13 @@
     let bleCharacteristic = null;
 
     let recognition = null;
-    let isListeningActive = false;
     let isProcessing = false;
     let isSpeaking = false;
+    let currentFacingMode = "environment"; // Defaults to rear camera to see the room
+    let wakeWordActiveUntil = 0;
 
     function blink() {
-      if (!isProcessing) {
+      if (!isProcessing && Date.now() > wakeWordActiveUntil) {
         eyeL.classList.add('blink');
         eyeR.classList.add('blink');
         setTimeout(() => {
@@ -149,21 +156,39 @@
       eyeR.className = 'eye ' + mood;
     }
 
+    async function startCamera(facingMode) {
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facingMode }, width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+    }
+
+    async function toggleCamera() {
+      currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+      statusLog.innerText = `Switching camera to: ${currentFacingMode}...`;
+      try {
+        await startCamera(currentFacingMode);
+        statusLog.innerText = `Camera: ${currentFacingMode === "environment" ? "Rear (Room View)" : "Front (Selfie)"}`;
+      } catch (err) {
+        statusLog.innerText = "Camera switch failed: " + err.message;
+      }
+    }
+
     async function initSensors() {
       try {
         window.speechSynthesis.cancel();
         setTimeout(() => {
-          const unlockUtterance = new SpeechSynthesisUtterance("DuckBot ready.");
-          unlockUtterance.volume = 0.8;
-          window.speechSynthesis.speak(unlockUtterance);
+          const unlock = new SpeechSynthesisUtterance("DuckBot online.");
+          unlock.volume = 0.8;
+          window.speechSynthesis.speak(unlock);
         }, 50);
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
-        video.srcObject = stream;
-        await video.play();
+        await startCamera(currentFacingMode);
 
         document.getElementById('startBtn').innerText = "Active (Hands-free)";
         document.getElementById('startBtn').style.background = "#1a1a24";
@@ -179,7 +204,7 @@
     function startContinuousListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert("Web Speech API not supported.");
+        alert("Web Speech API not supported. Use Google Chrome.");
         return;
       }
 
@@ -188,14 +213,6 @@
       recognition.interimResults = false;
       recognition.lang = 'en-US';
 
-      recognition.onstart = () => {
-        isListeningActive = true;
-        if (!isProcessing && !isSpeaking) {
-          setMood('');
-          statusLog.innerText = 'Listening: Say "Hey Duck" or "Robot"...';
-        }
-      };
-
       recognition.onresult = (event) => {
         if (isProcessing || isSpeaking) return;
 
@@ -203,20 +220,42 @@
         const text = event.results[lastIndex][0].transcript.trim();
         const lower = text.toLowerCase();
         
-        const wakeWords = ["duck", "hey duck", "robot", "hey robot"];
+        const wakeWords = ["hey duck", "duck", "hey robot", "robot"];
         const matched = wakeWords.find(w => lower.includes(w));
 
+        // Scenario A: Wake word detected in this utterance
         if (matched) {
-          // Wake word detected
           let cleanQuery = lower.substring(lower.indexOf(matched) + matched.length).replace(/^[,\s]+/, '');
-          if (!cleanQuery) cleanQuery = "Hello! What can you see right now?";
-
-          recognition.stop();
-          processMultimodalQuery(cleanQuery);
-        } else {
-          // No wake word - tell the user it was ignored
-          statusLog.innerText = `Ignored (No wake word): "${text}"\nTry: "Hey Duck, ${text}"`;
+          
+          if (cleanQuery.length > 2) {
+            // Wake word + query spoke in one breath (e.g. "Hey Duck, do you see my dog?")
+            wakeWordActiveUntil = 0;
+            recognition.stop();
+            processMultimodalQuery(cleanQuery);
+          } else {
+            // User only said "Hey Duck" and paused! Open a 6-second window for the follow-up
+            wakeWordActiveUntil = Date.now() + 6000;
+            setMood('attentive');
+            statusLog.innerText = 'DuckBot heard name! Listening for your question...';
+            
+            // Audio prompt to confirm it is listening
+            window.speechSynthesis.cancel();
+            const ack = new SpeechSynthesisUtterance("Yes?");
+            window.speechSynthesis.speak(ack);
+          }
+          return;
         }
+
+        // Scenario B: User speaks within the 6-second window after the wake word
+        if (Date.now() < wakeWordActiveUntil) {
+          wakeWordActiveUntil = 0;
+          recognition.stop();
+          processMultimodalQuery(text);
+          return;
+        }
+
+        // Scenario C: Conversation ignored (no wake word)
+        statusLog.innerText = `Ignored: "${text}"\n(Say "Hey Duck" first)`;
       };
 
       recognition.onerror = (event) => {
@@ -226,9 +265,8 @@
       };
 
       recognition.onend = () => {
-        isListeningActive = false;
         if (!isSpeaking && !isProcessing) {
-          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
+          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 250);
         }
       };
 
@@ -240,16 +278,23 @@
       const apiKey = document.getElementById('apiKey').value.trim();
 
       setMood('thinking');
-      statusLog.innerText = `Thinking: "${userText}"...`;
+      statusLog.innerText = `Query: "${userText}"\nAnalyzing camera frame...`;
 
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
 
+      // Improved system prompt ensuring targeted answers
+      const systemInstruction = 
+        "You are DuckBot, an embodied mobile companion robot with camera vision. " +
+        "CRITICAL INSTRUCTIONS:\n" +
+        "1. Directly answer the user's specific question or command. If the user asks whether a specific object, person, or animal (e.g., dog, cat, ball) is visible, inspect the image and explicitly state whether it is visible or not and describe what is actually in view.\n" +
+        "2. If instructed to 'start working', 'patrol', or 'explore', reply with an enthusiastic acknowledgment and issue a movement command.\n" +
+        "3. Keep speech concise (1 to 2 sentences).\n" +
+        "4. When instructed to move or search, append ONE action tag at the end: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP].";
+
       const requestPayload = {
-        system_instruction: {
-          parts: [{ text: "You are DuckBot, a small intelligent mobile companion robot. You see through your front camera. Reply concisely in one or two sentences maximum in an enthusiastic, friendly tone. If asked to move or search, end your reply with one tag: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP]." }]
-        },
+        system_instruction: { parts: [{ text: systemInstruction }] },
         contents: [{
           parts: [
             { text: userText },
@@ -301,7 +346,6 @@
 
       statusLog.innerText = `DuckBot: "${cleanText}"`;
 
-      // Cancel stuck audio, but wait 100ms before speaking (Android Bug Fix)
       window.speechSynthesis.cancel();
       
       setTimeout(() => {
@@ -312,11 +356,11 @@
         utterance.onend = () => {
           isSpeaking = false;
           setMood('');
-          statusLog.innerText = 'Ready. Say "Hey Duck" or "Robot"...';
+          statusLog.innerText = 'Ready. Say "Hey Duck"...';
           setTimeout(() => { try { recognition.start(); } catch (e) {} }, 400);
         };
 
-        utterance.onerror = (e) => {
+        utterance.onerror = () => {
           isSpeaking = false;
           setMood('');
           try { recognition.start(); } catch (err) {}
