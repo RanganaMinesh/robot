@@ -45,14 +45,18 @@
       height: 4px !important;
       margin-top: 58px;
     }
+    .listening {
+      background: #00e5ff !important;
+      box-shadow: 0 0 35px #00e5ff !important;
+    }
     .thinking {
       background: #ffaa00 !important;
       box-shadow: 0 0 25px #ffaa00 !important;
       animation: pulse 0.8s infinite alternate;
     }
     .speaking {
-      background: #0088ff !important;
-      box-shadow: 0 0 25px #0088ff !important;
+      background: #00ff66 !important;
+      box-shadow: 0 0 25px #00ff66 !important;
     }
     @keyframes pulse {
       from { transform: scale(0.9); }
@@ -105,15 +109,13 @@
   </div>
 
   <div id="controls">
-    <div id="status-log">Tap 'Start Sensors' to activate camera & mic.</div>
+    <div id="status-log">Tap 'Start Sensors' once to begin hands-free mode.</div>
     <div class="row">
-      <!-- HARDCODED LATEST API KEY -->
       <input type="password" id="apiKey" value="AQ.Ab8RN6LccBr62gtjbwxDtvfTipyLtkhLASzrKY1WXXfBfWhMMQ" style="flex: 2;">
-      <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
+      <button onclick="initSensors()" id="startBtn" style="flex: 1; background: #00ffcc; color: #000;">Start Sensors</button>
     </div>
     <div class="row">
       <button onclick="connectBluetooth()" style="flex: 1;">Pair ESP32</button>
-      <button onclick="triggerVoiceInput()" style="flex: 1; background: #00ffcc; color: #000;">🎤 Speak</button>
     </div>
   </div>
 
@@ -128,13 +130,21 @@
     const canvas = document.getElementById('snapshot-canvas');
     let bleCharacteristic = null;
 
+    let recognition = null;
+    let isListeningActive = false;
+    let isProcessing = false;
+    let isSpeaking = false;
+
+    // 1. Natural Blinking Animation
     function blink() {
-      eyeL.classList.add('blink');
-      eyeR.classList.add('blink');
-      setTimeout(() => {
-        eyeL.classList.remove('blink');
-        eyeR.classList.remove('blink');
-      }, 180);
+      if (!isProcessing) {
+        eyeL.classList.add('blink');
+        eyeR.classList.add('blink');
+        setTimeout(() => {
+          eyeL.classList.remove('blink');
+          eyeR.classList.remove('blink');
+        }, 180);
+      }
       setTimeout(blink, Math.random() * 4000 + 2000);
     }
     blink();
@@ -144,90 +154,118 @@
       eyeR.className = 'eye ' + mood;
     }
 
+    // 2. Unlock Audio & Activate Sensors (Only one tap needed)
     async function initSensors() {
       try {
+        // Unlock mobile audio synthesis engine on touch
+        window.speechSynthesis.cancel();
+        const unlockUtterance = new SpeechSynthesisUtterance("DuckBot ready.");
+        unlockUtterance.volume = 0.8;
+        window.speechSynthesis.speak(unlockUtterance);
+
+        // Request front camera
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false
         });
         video.srcObject = stream;
         await video.play();
-        statusLog.innerText = "Camera & Speech engine active.";
+
+        document.getElementById('startBtn').innerText = "Active (Hands-free)";
+        document.getElementById('startBtn').style.background = "#1a1a24";
+        document.getElementById('startBtn').style.color = "#00ffcc";
+
+        // Start continuous wake-word listening
+        startContinuousListening();
+        statusLog.innerText = 'Listening for wake word: Say "Hey Duck" or "Robot"...';
       } catch (err) {
-        statusLog.innerText = "Camera Error: " + err.message;
+        statusLog.innerText = "Init Error: " + err.message;
       }
     }
 
-    async function connectBluetooth() {
-      try {
-        statusLog.innerText = "Searching for ESP32 BLE device...";
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: 'DuckBot' }],
-          optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
-        });
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
-        bleCharacteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
-        statusLog.innerText = "Connected to ESP32 over BLE!";
-      } catch (err) {
-        statusLog.innerText = "BLE Connect failed: " + err.message;
-      }
-    }
-
-    function sendMotorCommand(cmd) {
-      if (!bleCharacteristic) {
-        console.log("BLE not connected. Command would be:", cmd);
-        return;
-      }
-      const encoder = new TextEncoder();
-      bleCharacteristic.writeValue(encoder.encode(cmd));
-    }
-
-    function triggerVoiceInput() {
+    // 3. Hands-Free Voice Engine with Wake Word Filter
+    function startContinuousListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert("Speech Recognition not supported. Use Chrome on Android.");
+        alert("Web Speech API not supported. Use Google Chrome on Android.");
         return;
       }
-      const recognition = new SpeechRecognition();
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
       recognition.lang = 'en-US';
 
       recognition.onstart = () => {
-        setMood('');
-        statusLog.innerText = "Listening...";
+        isListeningActive = true;
+        if (!isProcessing && !isSpeaking) {
+          setMood('');
+          statusLog.innerText = 'Listening for "Hey Duck" or "Robot"...';
+        }
       };
 
-      recognition.onresult = (e) => {
-        const transcript = e.results[0][0].transcript;
-        statusLog.innerText = `Heard: "${transcript}"`;
-        processMultimodalQuery(transcript);
+      recognition.onresult = (event) => {
+        if (isProcessing || isSpeaking) return;
+
+        const lastIndex = event.results.length - 1;
+        const text = event.results[lastIndex][0].transcript.trim();
+        statusLog.innerText = `Heard: "${text}"`;
+
+        const lower = text.toLowerCase();
+        const wakeWords = ["duck", "hey duck", "robot", "hey robot"];
+        const matched = wakeWords.find(w => lower.includes(w));
+
+        if (matched) {
+          // Extract the actual command after the wake word
+          let cleanQuery = lower.substring(lower.indexOf(matched) + matched.length).replace(/^[,\s]+/, '');
+          if (!cleanQuery) cleanQuery = "Hello! What can you see right now?";
+
+          // Stop listening immediately so it doesn't interrupt AI processing
+          recognition.stop();
+          processMultimodalQuery(cleanQuery);
+        }
       };
 
-      recognition.onerror = (e) => {
-        statusLog.innerText = "Mic Error: " + e.error;
+      recognition.onerror = (event) => {
+        // Ignore normal audio drop errors
+        if (event.error !== 'no-speech' && event.error !== 'aborted') {
+          console.warn("Speech Recognition Error:", event.error);
+        }
       };
 
-      recognition.start();
+      recognition.onend = () => {
+        isListeningActive = false;
+        // Auto-restart listening if the robot is idle
+        if (!isSpeaking && !isProcessing) {
+          setTimeout(() => {
+            try { recognition.start(); } catch (e) {}
+          }, 300);
+        }
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("Mic already active.");
+      }
     }
 
+    // 4. Vision Capture & Cloud LLM Query
     async function processMultimodalQuery(userText) {
+      isProcessing = true;
       const apiKey = document.getElementById('apiKey').value.trim();
-      if (!apiKey) {
-        statusLog.innerText = "Error: API key is missing.";
-        return;
-      }
 
       setMood('thinking');
-      statusLog.innerText = "Processing vision & query...";
+      statusLog.innerText = `Thinking: "${userText}"...`;
 
-      // Grab camera frame
+      // Grab snapshot from selfie camera
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
 
       const requestPayload = {
         system_instruction: {
-          parts: [{ text: "You are DuckBot, a small intelligent mobile robot. You can see through your front camera. Reply concisely in one or two sentences in a friendly tone. When instructed to move, end your reply with one tag: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP]." }]
+          parts: [{ text: "You are DuckBot, a small intelligent mobile companion robot. You see through your front camera. Reply concisely in one or two sentences maximum in an enthusiastic, friendly tone. If asked to move or search, end your reply with one tag: [CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP]." }]
         },
         contents: [{
           parts: [
@@ -251,35 +289,24 @@
         const data = await response.json();
 
         if (data.error) {
-          setMood('');
-          statusLog.innerText = `Google Error (${data.error.code}): ${data.error.message}`;
+          handleRobotResponse(`Error: ${data.error.message}`);
           return;
         }
 
-        if (!data.candidates || data.candidates.length === 0) {
-          setMood('');
-          statusLog.innerText = "Error: No response generated.";
-          return;
-        }
-
-        // Filter out internal thinking blocks to extract clean text
-        const parts = data.candidates[0].content?.parts || [];
+        const parts = data.candidates?.[0]?.content?.parts || [];
         const textPart = parts.find(p => p.text && !p.thought) || parts[parts.length - 1];
+        const replyText = textPart?.text || "I didn't catch that clearly.";
 
-        if (!textPart || !textPart.text) {
-          setMood('');
-          statusLog.innerText = "Error: Response content format unexpected.";
-          return;
-        }
-
-        handleRobotResponse(textPart.text);
+        handleRobotResponse(replyText);
       } catch (err) {
-        setMood('');
-        statusLog.innerText = "Fetch Exception: " + err.message;
+        handleRobotResponse("Network connection failed.");
       }
     }
 
+    // 5. Audio Playback with Audio-Focus Management
     function handleRobotResponse(rawReply) {
+      isProcessing = false;
+      isSpeaking = true;
       setMood('speaking');
 
       const match = rawReply.match(/\[CMD:(FORWARD|BACKWARD|LEFT|RIGHT|STOP)\]/);
@@ -287,15 +314,62 @@
 
       if (match) {
         const cmd = match[1];
-        statusLog.innerText = `Action: ${cmd}\n"${cleanText}"`;
         sendMotorCommand(cmd.charAt(0));
-      } else {
-        statusLog.innerText = `"${cleanText}"`;
       }
 
+      statusLog.innerText = `DuckBot: "${cleanText}"`;
+
+      // Cancel any stuck utterances before speaking
+      window.speechSynthesis.cancel();
+
       const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.onend = () => setMood('');
+      utterance.rate = 1.0;
+      utterance.pitch = 1.1; // Slightly playful robot tone
+
+      utterance.onend = () => {
+        isSpeaking = false;
+        setMood('');
+        statusLog.innerText = 'Ready. Say "Hey Duck" or "Robot"...';
+        // Re-enable microphone now that speaking is done
+        setTimeout(() => {
+          try { recognition.start(); } catch (e) {}
+        }, 400);
+      };
+
+      utterance.onerror = (e) => {
+        console.error("TTS Error:", e);
+        isSpeaking = false;
+        setMood('');
+        try { recognition.start(); } catch (err) {}
+      };
+
       window.speechSynthesis.speak(utterance);
+    }
+
+    // 6. Bluetooth BLE Link for ESP32
+    async function connectBluetooth() {
+      try {
+        statusLog.innerText = "Searching for ESP32 BLE device...";
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'DuckBot' }],
+          optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+        bleCharacteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+        statusLog.innerText = "Connected to ESP32 over BLE!";
+      } catch (err) {
+        statusLog.innerText = "BLE failed: " + err.message;
+      }
+    }
+
+    function sendMotorCommand(cmd) {
+      if (!bleCharacteristic) {
+        console.log("Hardware offline. Motor command simulated:", cmd);
+        return;
+      }
+      const encoder = new TextEncoder();
+      bleCharacteristic.writeValue(encoder.encode(cmd));
     }
   </script>
 </body>
