@@ -107,7 +107,8 @@
   <div id="controls">
     <div id="status-log">Tap 'Start Sensors' to activate camera & mic.</div>
     <div class="row">
-      <input type="password" id="apiKey" placeholder="Paste Google AI Studio API Key" style="flex: 2;">
+      <!-- HARDCODED API KEY HERE -->
+      <input type="password" id="apiKey" value="AQ.Ab8RN6Lxj4yCIcZAnwa6ZeCZchAJ9GbRLXRHr_n3_ktgD5dpXg" style="flex: 2;">
       <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
     </div>
     <div class="row">
@@ -126,10 +127,6 @@
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('snapshot-canvas');
     let bleCharacteristic = null;
-
-    // Load saved API key from phone storage if available
-    const savedKey = localStorage.getItem('duckbot_api_key');
-    if (savedKey) document.getElementById('apiKey').value = savedKey;
 
     function blink() {
       eyeL.classList.add('blink');
@@ -216,10 +213,9 @@
     async function processMultimodalQuery(userText) {
       let apiKey = document.getElementById('apiKey').value.trim();
       if (!apiKey) {
-        statusLog.innerText = "Error: Please paste your API key.";
+        statusLog.innerText = "Error: API key is missing.";
         return;
       }
-      localStorage.setItem('duckbot_api_key', apiKey);
 
       setMood('thinking');
       statusLog.innerText = "Processing vision & query...";
@@ -242,7 +238,8 @@
       };
 
       try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        // UPDATED ENDPOINT: Uses gemini-1.5-flash-latest to resolve the 404 error
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -251,7 +248,6 @@
 
         const data = await response.json();
 
-        // Check if Google returned an API error
         if (data.error) {
           setMood('');
           statusLog.innerText = `Google Error (${data.error.code}): ${data.error.message}`;
@@ -260,7 +256,7 @@
 
         if (!data.candidates || data.candidates.length === 0) {
           setMood('');
-          statusLog.innerText = "Error: No response generated (Safety block or empty output).";
+          statusLog.innerText = "Error: No response generated.";
           return;
         }
 
