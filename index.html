@@ -2,21 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>DuckBot Android Core</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
     body {
       background-color: #050508;
       color: #fff;
       font-family: monospace;
-      height: 100vh;
+      /* Fixed for mobile browsers: allows scrolling when keyboard is open */
+      min-height: 100vh;
+      min-height: 100svh; 
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: space-between;
-      overflow: hidden;
+      overflow-y: auto; 
+      overflow-x: hidden;
       padding: 1.5rem;
+      /* Accounts for modern phone gesture bars at the bottom */
+      padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
     }
 
     /* Face / Eyes Container */
@@ -27,7 +33,9 @@
       justify-content: center;
       gap: 40px;
       width: 100%;
+      min-height: 250px; /* Prevents eyes from crushing on small screens */
     }
+    
     .eye {
       width: 75px;
       height: 120px;
@@ -59,31 +67,36 @@
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 12px; /* Slightly more gap for easier touch targets */
+      padding-top: 20px;
     }
     .row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
+      width: 100%;
     }
     input, button {
-      padding: 10px;
+      padding: 14px; /* Taller padding for mobile thumbs */
       background: #1a1a24;
       border: 1px solid #33334d;
       color: #00ffcc;
-      border-radius: 6px;
-      font-size: 13px;
+      border-radius: 8px;
+      font-size: 14px;
+      min-height: 48px; /* Standard mobile touch target size */
     }
     button {
       cursor: pointer;
       font-weight: bold;
+      touch-action: manipulation; /* Prevents double-tap zoom on buttons */
     }
     button:active { background: #00ffcc; color: #000; }
     #status-log {
-      font-size: 11px;
+      font-size: 12px;
       color: #8888aa;
-      height: 35px;
-      overflow-y: hidden;
+      height: 40px;
+      overflow-y: auto;
       white-space: pre-wrap;
+      text-align: center;
     }
     video, canvas { display: none; }
   </style>
@@ -102,7 +115,7 @@
       <button onclick="initSensors()" style="flex: 1;">Start Sensors</button>
     </div>
     <div class="row">
-      <button onclick="connectBluetooth()" style="flex: 1;">Pair ESP32 (BLE)</button>
+      <button onclick="connectBluetooth()" style="flex: 1;">Pair ESP32</button>
       <button onclick="triggerVoiceInput()" style="flex: 1; background: #00ffcc; color: #000;">🎤 Speak</button>
     </div>
   </div>
@@ -214,12 +227,10 @@
       setMood('thinking');
       statusLog.innerText = "Capturing frame & thinking...";
 
-      // Grab still frame from selfie camera
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
 
-      // System prompt with tool-calling schema
       const systemInstruction = "You are DuckBot, a small intelligent mobile robot. You can see through your front camera. " +
         "You speak concisely in a friendly tone. When instructed to move or search, reply with text AND invoke one of these action tags at the very end of your response: " +
         "[CMD:FORWARD], [CMD:BACKWARD], [CMD:LEFT], [CMD:RIGHT], or [CMD:STOP].";
@@ -252,19 +263,17 @@
     function handleRobotResponse(rawReply) {
       setMood('speaking');
 
-      // Extract command tag if present
       const match = rawReply.match(/\[CMD:(FORWARD|BACKWARD|LEFT|RIGHT|STOP)\]/);
       let cleanText = rawReply.replace(/\[CMD:\w+\]/g, '').trim();
 
       if (match) {
         const cmd = match[1];
         statusLog.innerText = `Action: ${cmd} | Speech: ${cleanText}`;
-        sendMotorCommand(cmd.charAt(0)); // sends 'F', 'B', 'L', 'R', or 'S'
+        sendMotorCommand(cmd.charAt(0));
       } else {
         statusLog.innerText = cleanText;
       }
 
-      // Android native Text-to-Speech
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.onend = () => setMood('');
       window.speechSynthesis.speak(utterance);
