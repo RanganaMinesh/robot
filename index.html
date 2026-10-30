@@ -45,10 +45,6 @@
       height: 4px !important;
       margin-top: 58px;
     }
-    .listening {
-      background: #00e5ff !important;
-      box-shadow: 0 0 35px #00e5ff !important;
-    }
     .thinking {
       background: #ffaa00 !important;
       box-shadow: 0 0 25px #ffaa00 !important;
@@ -135,7 +131,6 @@
     let isProcessing = false;
     let isSpeaking = false;
 
-    // 1. Natural Blinking Animation
     function blink() {
       if (!isProcessing) {
         eyeL.classList.add('blink');
@@ -154,16 +149,15 @@
       eyeR.className = 'eye ' + mood;
     }
 
-    // 2. Unlock Audio & Activate Sensors (Only one tap needed)
     async function initSensors() {
       try {
-        // Unlock mobile audio synthesis engine on touch
         window.speechSynthesis.cancel();
-        const unlockUtterance = new SpeechSynthesisUtterance("DuckBot ready.");
-        unlockUtterance.volume = 0.8;
-        window.speechSynthesis.speak(unlockUtterance);
+        setTimeout(() => {
+          const unlockUtterance = new SpeechSynthesisUtterance("DuckBot ready.");
+          unlockUtterance.volume = 0.8;
+          window.speechSynthesis.speak(unlockUtterance);
+        }, 50);
 
-        // Request front camera
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: false
@@ -175,19 +169,17 @@
         document.getElementById('startBtn').style.background = "#1a1a24";
         document.getElementById('startBtn').style.color = "#00ffcc";
 
-        // Start continuous wake-word listening
         startContinuousListening();
-        statusLog.innerText = 'Listening for wake word: Say "Hey Duck" or "Robot"...';
+        statusLog.innerText = 'Listening: Say "Hey Duck" or "Robot"...';
       } catch (err) {
         statusLog.innerText = "Init Error: " + err.message;
       }
     }
 
-    // 3. Hands-Free Voice Engine with Wake Word Filter
     function startContinuousListening() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert("Web Speech API not supported. Use Google Chrome on Android.");
+        alert("Web Speech API not supported.");
         return;
       }
 
@@ -200,7 +192,7 @@
         isListeningActive = true;
         if (!isProcessing && !isSpeaking) {
           setMood('');
-          statusLog.innerText = 'Listening for "Hey Duck" or "Robot"...';
+          statusLog.innerText = 'Listening: Say "Hey Duck" or "Robot"...';
         }
       };
 
@@ -209,48 +201,40 @@
 
         const lastIndex = event.results.length - 1;
         const text = event.results[lastIndex][0].transcript.trim();
-        statusLog.innerText = `Heard: "${text}"`;
-
         const lower = text.toLowerCase();
+        
         const wakeWords = ["duck", "hey duck", "robot", "hey robot"];
         const matched = wakeWords.find(w => lower.includes(w));
 
         if (matched) {
-          // Extract the actual command after the wake word
+          // Wake word detected
           let cleanQuery = lower.substring(lower.indexOf(matched) + matched.length).replace(/^[,\s]+/, '');
           if (!cleanQuery) cleanQuery = "Hello! What can you see right now?";
 
-          // Stop listening immediately so it doesn't interrupt AI processing
           recognition.stop();
           processMultimodalQuery(cleanQuery);
+        } else {
+          // No wake word - tell the user it was ignored
+          statusLog.innerText = `Ignored (No wake word): "${text}"\nTry: "Hey Duck, ${text}"`;
         }
       };
 
       recognition.onerror = (event) => {
-        // Ignore normal audio drop errors
         if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          console.warn("Speech Recognition Error:", event.error);
+          console.warn("Speech Error:", event.error);
         }
       };
 
       recognition.onend = () => {
         isListeningActive = false;
-        // Auto-restart listening if the robot is idle
         if (!isSpeaking && !isProcessing) {
-          setTimeout(() => {
-            try { recognition.start(); } catch (e) {}
-          }, 300);
+          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 300);
         }
       };
 
-      try {
-        recognition.start();
-      } catch (e) {
-        console.warn("Mic already active.");
-      }
+      try { recognition.start(); } catch (e) {}
     }
 
-    // 4. Vision Capture & Cloud LLM Query
     async function processMultimodalQuery(userText) {
       isProcessing = true;
       const apiKey = document.getElementById('apiKey').value.trim();
@@ -258,7 +242,6 @@
       setMood('thinking');
       statusLog.innerText = `Thinking: "${userText}"...`;
 
-      // Grab snapshot from selfie camera
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
@@ -303,7 +286,6 @@
       }
     }
 
-    // 5. Audio Playback with Audio-Focus Management
     function handleRobotResponse(rawReply) {
       isProcessing = false;
       isSpeaking = true;
@@ -319,34 +301,31 @@
 
       statusLog.innerText = `DuckBot: "${cleanText}"`;
 
-      // Cancel any stuck utterances before speaking
+      // Cancel stuck audio, but wait 100ms before speaking (Android Bug Fix)
       window.speechSynthesis.cancel();
+      
+      setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.0;
+        utterance.pitch = 1.1; 
 
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.1; // Slightly playful robot tone
+        utterance.onend = () => {
+          isSpeaking = false;
+          setMood('');
+          statusLog.innerText = 'Ready. Say "Hey Duck" or "Robot"...';
+          setTimeout(() => { try { recognition.start(); } catch (e) {} }, 400);
+        };
 
-      utterance.onend = () => {
-        isSpeaking = false;
-        setMood('');
-        statusLog.innerText = 'Ready. Say "Hey Duck" or "Robot"...';
-        // Re-enable microphone now that speaking is done
-        setTimeout(() => {
-          try { recognition.start(); } catch (e) {}
-        }, 400);
-      };
+        utterance.onerror = (e) => {
+          isSpeaking = false;
+          setMood('');
+          try { recognition.start(); } catch (err) {}
+        };
 
-      utterance.onerror = (e) => {
-        console.error("TTS Error:", e);
-        isSpeaking = false;
-        setMood('');
-        try { recognition.start(); } catch (err) {}
-      };
-
-      window.speechSynthesis.speak(utterance);
+        window.speechSynthesis.speak(utterance);
+      }, 100);
     }
 
-    // 6. Bluetooth BLE Link for ESP32
     async function connectBluetooth() {
       try {
         statusLog.innerText = "Searching for ESP32 BLE device...";
